@@ -15,21 +15,34 @@
 import { instance } from './request'
 import axios from 'axios'
 import qs from 'qs'
+import localforage from 'localforage'
 export default {
   name: 'myAbout',
   data() {
+    const successObj = localStorage.getItem('downSuccess')
+      ? JSON.parse(localStorage.getItem('downSuccess'))
+      : null
     return {
       fileList: [],
       file: {
         url: 'http://127.0.0.1:7777/api/rangeFile?filename=assddewwws.rar',
-        loadSize: 0, //成功上传切片的字节大小
-        isShow: false,
-        percentage: 0,
-        iconClass: 'el-icon-video-pause',
-        cancel: [],
-        terminateRequest: false
+        loadSize: successObj ? successObj.loadSize : 0, //成功上传切片的个数，也是断点下载之后继续下载的i
+        isShow: false, //是否显示进度条
+        percentage: successObj ? successObj.percentage : 0, //进度条的值
+        iconClass: 'el-icon-video-pause', //暂停或上传图标
+        cancel: [], //需要取消的接口请求
+        terminateRequest: false, //当前的状态是否是暂停
+        allBufferLists: [], //切片下载成功的结果
+        interfaceFailedLists: [] //切片下载接口失败的索引i
       }
     }
+  },
+  async created() {
+    const allBufferLists = await localforage.getItem('allBufferLists')
+    const interfaceFailedLists = await localforage.getItem('interfaceFailedLists')
+    this.file.allBufferLists = allBufferLists || []
+    this.file.interfaceFailedLists = interfaceFailedLists || []
+    console.log(this.file, allBufferLists, interfaceFailedLists, 456321000)
   },
   methods: {
     async handlePausePlay(file) {
@@ -49,8 +62,7 @@ export default {
         if (file.isinterfaceFailedfor) {
           const idx = file.interfaceFailedLists.indexOf(startIdx)
           file.interfaceFailedLists = file.interfaceFailedLists.splice(idx)
-          console.log(startIdx, file.interfaceFailedLists, 987412000)
-          await this.lastFn(file)
+          this.lastFn(file)
         } else {
           this.continueUpload(file, startIdx)
         }
@@ -62,7 +74,7 @@ export default {
       const fn = () =>
         axios({
           url: file.url,
-          method: 'post',
+          method: 'get',
           headers: {
             range: `bytes=${start}-${end}`
           },
@@ -81,7 +93,7 @@ export default {
           const promise = fn()
           file.lists.add(promise)
           promise
-            .then((res) => {
+            .then(async (res) => {
               if (+res.status === 206) {
                 file.lists.delete(promise)
                 file.interfaceFailedLists = file.interfaceFailedLists.filter((nub) => nub != i)
@@ -90,18 +102,26 @@ export default {
                   buffer: res.data
                 })
                 file.loadSize++
-                // localStorage.setItem(loadSize, file.loadSize)
                 file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
-                console.log(file.percentage, 3251000)
+                localStorage.setItem(
+                  'downSuccess',
+                  JSON.stringify({
+                    loadSize: file.loadSize,
+                    percentage: file.percentage
+                  })
+                )
+                await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
+                await localforage.setItem('allBufferLists', file.allBufferLists)
                 return
               }
               throw '下载失败，请您稍后再试~~'
             })
-            .catch((err) => {
+            .catch(async (err) => {
               file.lists.delete(promise)
               index++
               if (!file.interfaceFailedLists.includes(i)) {
                 file.interfaceFailedLists.push(i)
+                await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
               }
               sgfd(i, fn, index)
             })
@@ -133,9 +153,6 @@ export default {
     //失败接口重试
     async lastFn(file) {
       if (file.interfaceFailedLists.length) {
-        alert(123)
-        console.log(file.interfaceFailedLists, 66666666666)
-
         for (const i of file.interfaceFailedLists) {
           if (file.terminateRequest) {
             //isinterfaceFailedfor失败接口重试时点击暂停按钮
@@ -146,10 +163,8 @@ export default {
         }
       }
       await Promise.allSettled(file.lists)
-      file.isinterfaceFailedfor = undefined
-      file.interfaceFailedLists = []
-      console.log(file.allBufferLists.length, file.totalChunks, 7452100000)
-      if (file.allBufferLists.length != file.totalChunks) {
+      console.log(file.loadSize, file.totalChunks, 78954200000)
+      if (file.loadSize != file.totalChunks) {
         this.$message.error('下载失败，请您稍后再试~~')
       } else {
         file.allBufferLists.sort((a, b) => a.idx - b.idx)
@@ -168,9 +183,15 @@ export default {
         document.body.removeChild(elink)
       }
       file.isShow = false
+      file.isinterfaceFailedfor = undefined
       file.loadSize = 0
       file.percentage = 0
       file.cancel = []
+      localStorage.removeItem('downSuccess')
+      file.allBufferLists = []
+      file.interfaceFailedLists = []
+      console.log(1563200000000)
+      await localforage.clear()
     },
     concatenate(resultConstructor, arrays) {
       let totalLength = 0
@@ -195,9 +216,7 @@ export default {
         console.time('并发下载')
         file.sizeLength = Number(res.headers['content-length'])
         file.isShow = true
-        file.percentage = 0
-        file.loadSize = 0
-        file.chunkSize = 1024 * 1024 //切片大小
+        file.chunkSize = 10 * 1024 * 1024 //切片大小
         const idx = this.file.url.indexOf('?')
         file.obj = qs.parse(this.file.url.slice(idx + 1))
         file.issmallfile = file.sizeLength <= file.chunkSize
@@ -234,12 +253,14 @@ export default {
         } else {
           file.lists = new Set()
           file.cancel = []
-          file.allBufferLists = [] //切片下载成功的结果
-          file.downloadedBytes = 0
           file.totalChunks = Math.ceil(file.sizeLength / file.chunkSize)
           file.suspendfailedLists = [] //点击暂停时接口失败的索引i
-          file.interfaceFailedLists = [] //切片下载接口失败的索引i
-          this.continueUpload(file, 0)
+          console.log(file, 78945610000)
+          if (file.percentage) {
+            this.continueUpload(file, file.loadSize)
+          } else {
+            this.continueUpload(file, 0)
+          }
         }
       } else {
         this.$message.warning(`下载失败`)
