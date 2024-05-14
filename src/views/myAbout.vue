@@ -1,6 +1,6 @@
 <template>
   <div>
-    <el-button @click="handleExport(file)">文件下载</el-button>
+    <el-button @click="handleExport(file)" :loading="file.isShow">文件下载</el-button>
     <el-progress v-show="file.isShow" :percentage="file.percentage"></el-progress>
     <i
       v-show="file.isShow && !file.issmallfile"
@@ -36,7 +36,6 @@ export default {
       if (file.iconClass == 'el-icon-video-pause') {
         file.iconClass = 'el-icon-video-play'
         if (Array.isArray(file.cancel)) {
-          console.log(file.cancel, 74562000)
           file.cancel.forEach((fn) => {
             fn && fn()
           })
@@ -45,149 +44,115 @@ export default {
       } else {
         file.terminateRequest = false
         file.iconClass = 'el-icon-video-pause'
-        const startIdx = Math.min(...file.failedLists)
-        this.continueUpload(file, startIdx)
+        const startIdx = Math.min(...file.suspendfailedLists)
+        file.suspendfailedLists = []
+        if (file.isinterfaceFailedfor) {
+          const idx = file.interfaceFailedLists.indexOf(startIdx)
+          file.interfaceFailedLists = file.interfaceFailedLists.splice(idx)
+          console.log(startIdx, file.interfaceFailedLists, 987412000)
+          await this.lastFn(file)
+        } else {
+          this.continueUpload(file, startIdx)
+        }
       }
     },
+    async forFn(i, file) {
+      const start = i * file.chunkSize
+      const end = i + 1 == file.totalChunks ? file.sizeLength - 1 : (i + 1) * file.chunkSize - 1
+      const fn = () =>
+        axios({
+          url: file.url,
+          method: 'post',
+          headers: {
+            range: `bytes=${start}-${end}`
+          },
+          responseType: 'arraybuffer',
+          cancelToken: new axios.CancelToken(function (c) {
+            file.cancel.push(c)
+          })
+        })
+      //接口失败重试每个接口总共可以发送4次请求，重试3次
+      const sgfd = (i, fn, index = 0, max = 4) => {
+        if (file.terminateRequest) {
+          file.suspendfailedLists.push(i)
+          return
+        }
+        if (index < max) {
+          const promise = fn()
+          file.lists.add(promise)
+          promise
+            .then((res) => {
+              if (+res.status === 206) {
+                file.lists.delete(promise)
+                file.interfaceFailedLists = file.interfaceFailedLists.filter((nub) => nub != i)
+                file.allBufferLists.push({
+                  idx: i,
+                  buffer: res.data
+                })
+                file.loadSize++
+                // localStorage.setItem(loadSize, file.loadSize)
+                file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
+                console.log(file.percentage, 3251000)
+                return
+              }
+              throw '下载失败，请您稍后再试~~'
+            })
+            .catch((err) => {
+              file.lists.delete(promise)
+              index++
+              if (!file.interfaceFailedLists.includes(i)) {
+                file.interfaceFailedLists.push(i)
+              }
+              sgfd(i, fn, index)
+            })
+        }
+      }
+      async function FSG() {
+        if (file.lists.size >= 3) {
+          // 3代表请求控制最大并发数
+          try {
+            await Promise.race(file.lists)
+          } catch (err) {
+            await FSG()
+          }
+        }
+      }
+      sgfd(i, fn)
+      await FSG()
+    },
     async continueUpload(file, startIdx) {
-      file.failedLists = [] //暂停时失败的downloadedBytes
-      // while (file.downloadedBytes <= file.sizeLength - 1) {
-      //   if (file.terminateRequest) {
-      //     return
-      //   }
-      //   const start = file.downloadedBytes
-      //   const end = Math.min(file.sizeLength - 1, start + file.chunkSize - 1)
-      //   const fn = () =>
-      //     axios({
-      //       url: file.url,
-      //       method: 'get',
-      //       headers: {
-      //         range: `bytes=${start}-${end}`
-      //       },
-      //       responseType: 'arraybuffer',
-      //       cancelToken: new axios.CancelToken(function (c) {
-      //         file.cancel.push(c)
-      //       })
-      //     })
-      //   file.downloadedBytes = end + 1
-      //   //接口失败重试每个接口总共可以发送4次请求，重试3次
-      //   const sgfd = (i, fn, index = 0, max = 4) => {
-      //     if (file.terminateRequest) {
-      //       failedLists.push(file.downloadedBytes)
-      //       return
-      //     }
-      //     if (index < max) {
-      //       const promise = fn()
-      //       file.lists.add(promise)
-      //       promise
-      //         .then((res) => {
-      //           if (+res.status === 206) {
-      //             file.lists.delete(promise)
-
-      //             file.allBufferLists.push({
-      //               idx: i,
-      //               buffer: res.data
-      //             })
-      //             // file.loadSize += end - start + 1
-      //             file.loadSize++
-      //             file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
-      //             console.log(file.percentage, 3251000)
-      //             return
-      //           }
-      //           throw '下载失败，请您稍后再试~~'
-      //         })
-      //         .catch((err) => {
-      //           file.lists.delete(promise)
-      //           index++
-      //           sgfd(i, fn, index)
-      //         })
-      //     }
-      //   }
-      //   async function FSG() {
-      //     if (file.lists.size >= 3) {
-      //       // 3代表请求控制最大并发数
-      //       try {
-      //         await Promise.race(file.lists)
-      //       } catch (err) {
-      //         await FSG()
-      //       }
-      //     }
-      //   }
-      //   sgfd(i, fn)
-      //   await FSG()
-      // }
       for (let i = startIdx; i < file.totalChunks; i++) {
         if (file.terminateRequest) {
           return
         }
-        const start = i * file.chunkSize
-        const end = i + 1 == file.totalChunks ? file.sizeLength - 1 : (i + 1) * file.chunkSize - 1
-        const fn = () =>
-          axios({
-            url: file.url,
-            method: 'get',
-            headers: {
-              range: `bytes=${start}-${end}`
-            },
-            responseType: 'arraybuffer',
-            cancelToken: new axios.CancelToken(function (c) {
-              file.cancel.push(c)
-            })
-          })
-
-        //接口失败重试每个接口总共可以发送4次请求，重试3次
-        const sgfd = (i, fn, index = 0, max = 4) => {
-          if (file.terminateRequest) {
-            file.failedLists.push(i)
-            return
-          }
-          if (index < max) {
-            const promise = fn()
-            file.lists.add(promise)
-            promise
-              .then((res) => {
-                if (+res.status === 206) {
-                  file.lists.delete(promise)
-                  file.allBufferLists.push({
-                    idx: i,
-                    buffer: res.data
-                  })
-                  file.loadSize++
-                  localStorage.setItem(loadSize, file.loadSize)
-                  file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
-                  console.log(file.percentage, 3251000)
-                  return
-                }
-                throw '下载失败，请您稍后再试~~'
-              })
-              .catch((err) => {
-                file.lists.delete(promise)
-                index++
-                sgfd(i, fn, index)
-              })
-          }
-        }
-        async function FSG() {
-          if (file.lists.size >= 3) {
-            // 3代表请求控制最大并发数
-            try {
-              await Promise.race(file.lists)
-            } catch (err) {
-              await FSG()
-            }
-          }
-        }
-        sgfd(i, fn)
-        await FSG()
+        await this.forFn(i, file)
       }
       await Promise.allSettled(file.lists)
-      file.allBufferLists.sort((a, b) => a.idx - b.idx)
+      await this.lastFn(file)
+    },
+    //失败接口重试
+    async lastFn(file) {
+      if (file.interfaceFailedLists.length) {
+        alert(123)
+        console.log(file.interfaceFailedLists, 66666666666)
+
+        for (const i of file.interfaceFailedLists) {
+          if (file.terminateRequest) {
+            //isinterfaceFailedfor失败接口重试时点击暂停按钮
+            file.isinterfaceFailedfor = true
+            return
+          }
+          await this.forFn(i, file)
+        }
+      }
+      await Promise.allSettled(file.lists)
+      file.isinterfaceFailedfor = undefined
+      file.interfaceFailedLists = []
       console.log(file.allBufferLists.length, file.totalChunks, 7452100000)
       if (file.allBufferLists.length != file.totalChunks) {
         this.$message.error('下载失败，请您稍后再试~~')
       } else {
-        file.allBufferLists = []
-        console.log(file.allBufferLists, file.totalChunks, 78921000)
+        file.allBufferLists.sort((a, b) => a.idx - b.idx)
         const arrBufferList = file.allBufferLists.map((item) => new Uint8Array(item.buffer))
         const allBuffer = this.concatenate(Uint8Array, arrBufferList)
         const blob = new Blob([allBuffer])
@@ -203,6 +168,9 @@ export default {
         document.body.removeChild(elink)
       }
       file.isShow = false
+      file.loadSize = 0
+      file.percentage = 0
+      file.cancel = []
     },
     concatenate(resultConstructor, arrays) {
       let totalLength = 0
@@ -229,7 +197,7 @@ export default {
         file.isShow = true
         file.percentage = 0
         file.loadSize = 0
-        file.chunkSize = 10 * 1024 * 1024 //切片大小
+        file.chunkSize = 1024 * 1024 //切片大小
         const idx = this.file.url.indexOf('?')
         file.obj = qs.parse(this.file.url.slice(idx + 1))
         file.issmallfile = file.sizeLength <= file.chunkSize
@@ -269,6 +237,8 @@ export default {
           file.allBufferLists = [] //切片下载成功的结果
           file.downloadedBytes = 0
           file.totalChunks = Math.ceil(file.sizeLength / file.chunkSize)
+          file.suspendfailedLists = [] //点击暂停时接口失败的索引i
+          file.interfaceFailedLists = [] //切片下载接口失败的索引i
           this.continueUpload(file, 0)
         }
       } else {
