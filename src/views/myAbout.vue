@@ -22,13 +22,15 @@ export default {
     const successObj = localStorage.getItem('downSuccess')
       ? JSON.parse(localStorage.getItem('downSuccess'))
       : null
+    const isinterfaceFailedfor = localStorage.getItem('isinterfaceFailedfor') === 'true'
     return {
       fileList: [],
       file: {
         url: 'http://127.0.0.1:7777/api/rangeFile?filename=assddewwws.rar',
-        loadSize: successObj ? successObj.loadSize : 0, //成功上传切片的个数，也是断点下载之后继续下载的i
+        loadSize: successObj ? +successObj.loadSize : 0, //成功上传切片的个数，也是断点下载之后继续下载的i
+        percentage: successObj ? +successObj.percentage : 0, //进度条的值
+        isinterfaceFailedfor,
         isShow: false, //是否显示进度条
-        percentage: successObj ? successObj.percentage : 0, //进度条的值
         iconClass: 'el-icon-video-pause', //暂停或上传图标
         cancel: [], //需要取消的接口请求
         terminateRequest: false, //当前的状态是否是暂停
@@ -60,8 +62,6 @@ export default {
         console.log(file.loadSize, file.suspendfailedLists, startIdx, 11111111)
         file.suspendfailedLists = []
         if (file.isinterfaceFailedfor) {
-          const idx = file.interfaceFailedLists.indexOf(startIdx)
-          file.interfaceFailedLists = file.interfaceFailedLists.splice(idx)
           this.lastFn(file)
         } else {
           this.continueUpload(file, startIdx)
@@ -150,13 +150,16 @@ export default {
       await Promise.allSettled(file.lists)
       await this.lastFn(file)
     },
-    //失败接口重试
+    //所有请求完成后，失败请求接口重试
     async lastFn(file) {
       if (file.interfaceFailedLists.length) {
         for (const i of file.interfaceFailedLists) {
-          if (file.terminateRequest) {
-            //isinterfaceFailedfor失败接口重试时点击暂停按钮
+          if (!file.isinterfaceFailedfor) {
+            //所有请求完成后，失败接口重试时点击暂停按钮或页面刷新时的操作
             file.isinterfaceFailedfor = true
+            localStorage.setItem('isinterfaceFailedfor', true)
+          }
+          if (file.terminateRequest) {
             return
           }
           await this.forFn(i, file)
@@ -183,14 +186,14 @@ export default {
         document.body.removeChild(elink)
       }
       file.isShow = false
-      file.isinterfaceFailedfor = undefined
       file.loadSize = 0
       file.percentage = 0
       file.cancel = []
       localStorage.removeItem('downSuccess')
+      file.isinterfaceFailedfor = false
+      localStorage.removeItem('isinterfaceFailedfor')
       file.allBufferLists = []
       file.interfaceFailedLists = []
-      console.log(1563200000000)
       await localforage.clear()
     },
     concatenate(resultConstructor, arrays) {
@@ -256,7 +259,11 @@ export default {
           file.totalChunks = Math.ceil(file.sizeLength / file.chunkSize)
           file.suspendfailedLists = [] //点击暂停时接口失败的索引i
           if (file.percentage) {
-            this.continueUpload(file, file.loadSize)
+            if (file.isinterfaceFailedfor) {
+              this.lastFn(file)
+            } else {
+              this.continueUpload(file, file.loadSize)
+            }
           } else {
             this.continueUpload(file, 0)
           }
