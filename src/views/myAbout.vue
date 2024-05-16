@@ -42,7 +42,6 @@ export default {
     const interfaceFailedLists = await localforage.getItem('interfaceFailedLists')
     this.file.allBufferLists = allBufferLists || []
     this.file.interfaceFailedLists = interfaceFailedLists || []
-    console.log(this.file, allBufferLists, interfaceFailedLists, 456321000)
   },
   methods: {
     async handlePausePlay(file) {
@@ -58,6 +57,7 @@ export default {
         file.terminateRequest = false
         file.iconClass = 'el-icon-video-pause'
         const startIdx = Math.min(...file.suspendfailedLists)
+        console.log(file.loadSize, file.suspendfailedLists, startIdx, 11111111)
         file.suspendfailedLists = []
         if (file.isinterfaceFailedfor) {
           const idx = file.interfaceFailedLists.indexOf(startIdx)
@@ -85,11 +85,10 @@ export default {
         })
       //接口失败重试每个接口总共可以发送4次请求，重试3次
       const sgfd = (i, fn, index = 0, max = 4) => {
-        if (file.terminateRequest) {
-          file.suspendfailedLists.push(i)
-          return
-        }
         if (index < max) {
+          if (file.terminateRequest) {
+            return
+          }
           const promise = fn()
           file.lists.add(promise)
           promise
@@ -118,6 +117,7 @@ export default {
             })
             .catch(async (err) => {
               file.lists.delete(promise)
+              file.suspendfailedLists.push(i)
               index++
               if (!file.interfaceFailedLists.includes(i)) {
                 file.interfaceFailedLists.push(i)
@@ -163,7 +163,7 @@ export default {
         }
       }
       await Promise.allSettled(file.lists)
-      console.log(file.loadSize, file.totalChunks, 78954200000)
+      console.log(file.loadSize, file.totalChunks, file.allBufferLists, 22222222222222222)
       if (file.loadSize != file.totalChunks) {
         this.$message.error('下载失败，请您稍后再试~~')
       } else {
@@ -255,7 +255,6 @@ export default {
           file.cancel = []
           file.totalChunks = Math.ceil(file.sizeLength / file.chunkSize)
           file.suspendfailedLists = [] //点击暂停时接口失败的索引i
-          console.log(file, 78945610000)
           if (file.percentage) {
             this.continueUpload(file, file.loadSize)
           } else {
