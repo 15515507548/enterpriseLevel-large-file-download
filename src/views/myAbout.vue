@@ -19,17 +19,13 @@ import localforage from 'localforage'
 export default {
   name: 'myAbout',
   data() {
-    const successObj = localStorage.getItem('downSuccess')
-      ? JSON.parse(localStorage.getItem('downSuccess'))
-      : null
-    const isinterfaceFailedfor = localStorage.getItem('isinterfaceFailedfor') === 'true'
     return {
       fileList: [],
       file: {
         url: 'http://127.0.0.1:7777/api/rangeFile?filename=assddewwws.rar',
-        loadSize: successObj ? +successObj.loadSize : 0, //成功上传切片的个数，也是断点下载之后继续下载的i
-        percentage: successObj ? +successObj.percentage : 0, //进度条的值
-        isinterfaceFailedfor,
+        loadSize: 0, //成功上传切片的个数，也是断点下载之后继续下载的i
+        percentage: 0, //进度条的值
+        isinterfaceFailedfor: false,
         isShow: false, //是否显示进度条
         iconClass: 'el-icon-video-pause', //暂停或上传图标
         cancel: [], //需要取消的接口请求
@@ -40,6 +36,14 @@ export default {
     }
   },
   async created() {
+    const successObj = localStorage.getItem('downSuccess')
+      ? JSON.parse(localStorage.getItem('downSuccess'))
+      : null
+    const isinterfaceFailedfor = localStorage.getItem('isinterfaceFailedfor') === 'true'
+    this.file.loadSize = successObj ? +successObj.loadSize : 0
+    this.file.percentage = successObj ? +successObj.percentage : 0
+    this.file.isinterfaceFailedfor = isinterfaceFailedfor
+
     const allBufferLists = await localforage.getItem('allBufferLists')
     const interfaceFailedLists = await localforage.getItem('interfaceFailedLists')
     this.file.allBufferLists = allBufferLists || []
@@ -49,30 +53,30 @@ export default {
     async handlePausePlay(file) {
       if (file.iconClass == 'el-icon-video-pause') {
         file.iconClass = 'el-icon-video-play'
-        if (Array.isArray(file.cancel)) {
-          file.cancel.forEach((fn) => {
-            fn && fn()
-          })
-          file.terminateRequest = true
-        }
+        file.cancel.forEach((source) => {
+          // source && source.abort()
+          source && source()
+        })
+        file.terminateRequest = true
       } else {
         file.terminateRequest = false
         file.iconClass = 'el-icon-video-pause'
-        const startIdx = Math.min(...file.suspendfailedLists)
-        console.log(file.loadSize, file.suspendfailedLists, startIdx, 11111111)
-        file.suspendfailedLists = []
         if (file.isinterfaceFailedfor) {
           this.lastFn(file)
         } else {
-          this.continueUpload(file, startIdx)
+          const obj = file.allBufferLists.find((item) => item.loadSize === file.loadSize)
+          console.log(obj, 11111111)
+          if (obj) {
+            this.continueUpload(file, obj.idx + 1)
+          }
         }
       }
     },
     async forFn(i, file) {
       const start = i * file.chunkSize
       const end = i + 1 == file.totalChunks ? file.sizeLength - 1 : (i + 1) * file.chunkSize - 1
-      const fn = () =>
-        axios({
+      const fn = () => {
+        return axios({
           url: file.url,
           method: 'get',
           headers: {
@@ -83,6 +87,8 @@ export default {
             file.cancel.push(c)
           })
         })
+      }
+
       //接口失败重试每个接口总共可以发送4次请求，重试3次
       const sgfd = (i, fn, index = 0, max = 4) => {
         if (index < max) {
@@ -92,15 +98,17 @@ export default {
           const promise = fn()
           file.lists.add(promise)
           promise
-            .then(async (res) => {
+            .then((res) => {
               if (+res.status === 206) {
                 file.lists.delete(promise)
                 file.interfaceFailedLists = file.interfaceFailedLists.filter((nub) => nub != i)
+                file.loadSize++
                 file.allBufferLists.push({
                   idx: i,
-                  buffer: res.data
+                  buffer: res.data,
+                  loadSize: file.loadSize
                 })
-                file.loadSize++
+                console.log(i, file.loadSize, '成功')
                 file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
                 localStorage.setItem(
                   'downSuccess',
@@ -109,39 +117,44 @@ export default {
                     percentage: file.percentage
                   })
                 )
-                await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
-                await localforage.setItem('allBufferLists', file.allBufferLists)
+
                 return
               }
               throw '下载失败，请您稍后再试~~'
             })
-            .catch(async (err) => {
+            .catch((err) => {
               file.lists.delete(promise)
-              file.suspendfailedLists.push(i)
               index++
-              if (!file.interfaceFailedLists.includes(i)) {
-                file.interfaceFailedLists.push(i)
-                await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
-              }
               sgfd(i, fn, index)
             })
         }
       }
-      async function FSG() {
+      async function FSG(i) {
         if (file.lists.size >= 3) {
           // 3代表请求控制最大并发数
           try {
             await Promise.race(file.lists)
+            await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
+            await localforage.setItem('allBufferLists', file.allBufferLists)
           } catch (err) {
-            await FSG()
+            if (!file.interfaceFailedLists.includes(i)) {
+              file.interfaceFailedLists.push(i)
+              await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
+            }
+            await FSG(i)
           }
         }
       }
+
       sgfd(i, fn)
-      await FSG()
+      await FSG(i)
     },
     async continueUpload(file, startIdx) {
       for (let i = startIdx; i < file.totalChunks; i++) {
+        const obj = file.allBufferLists.find((item) => item.idx === i)
+        if (obj) {
+          continue
+        }
         if (file.terminateRequest) {
           return
         }
@@ -153,7 +166,12 @@ export default {
     //所有请求完成后，失败请求接口重试
     async lastFn(file) {
       if (file.interfaceFailedLists.length) {
+        console.log('失败')
         for (const i of file.interfaceFailedLists) {
+          const obj = file.allBufferLists.find((item) => item.idx === i)
+          if (obj) {
+            continue
+          }
           if (!file.isinterfaceFailedfor) {
             //所有请求完成后，失败接口重试时点击暂停按钮或页面刷新时的操作
             file.isinterfaceFailedfor = true
@@ -166,11 +184,12 @@ export default {
         }
       }
       await Promise.allSettled(file.lists)
-      console.log(file.loadSize, file.totalChunks, file.allBufferLists, 22222222222222222)
+      // if (file.iconClass == 'el-icon-video-play') return
       if (file.loadSize != file.totalChunks) {
         this.$message.error('下载失败，请您稍后再试~~')
       } else {
         file.allBufferLists.sort((a, b) => a.idx - b.idx)
+        console.log(file.loadSize, file.totalChunks, file.allBufferLists, 4444444)
         const arrBufferList = file.allBufferLists.map((item) => new Uint8Array(item.buffer))
         const allBuffer = this.concatenate(Uint8Array, arrBufferList)
         const blob = new Blob([allBuffer])
@@ -185,6 +204,7 @@ export default {
         window.URL.revokeObjectURL(blobURL)
         document.body.removeChild(elink)
       }
+      console.log(file.loadSize, file.percentage, file.totalChunks, '结束1')
       file.isShow = false
       file.loadSize = 0
       file.percentage = 0
@@ -192,6 +212,7 @@ export default {
       localStorage.removeItem('downSuccess')
       file.isinterfaceFailedfor = false
       localStorage.removeItem('isinterfaceFailedfor')
+      console.log(file.loadSize, file.percentage, file.totalChunks, '结束2')
       file.allBufferLists = []
       file.interfaceFailedLists = []
       await localforage.clear()
@@ -257,7 +278,7 @@ export default {
           file.lists = new Set()
           file.cancel = []
           file.totalChunks = Math.ceil(file.sizeLength / file.chunkSize)
-          file.suspendfailedLists = [] //点击暂停时接口失败的索引i
+          console.log(file.loadSize, file.percentage, file.totalChunks, '开始')
           if (file.percentage) {
             if (file.isinterfaceFailedfor) {
               this.lastFn(file)
