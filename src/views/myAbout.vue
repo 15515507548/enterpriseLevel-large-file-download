@@ -65,7 +65,6 @@ export default {
           this.lastFn(file)
         } else {
           const obj = file.allBufferLists.find((item) => item.loadSize === file.loadSize)
-          console.log(obj, 11111111)
           if (obj) {
             this.continueUpload(file, obj.idx + 1)
           }
@@ -240,7 +239,7 @@ export default {
         console.time('并发下载')
         file.sizeLength = Number(res.headers['content-length'])
         file.isShow = true
-        file.chunkSize = 10 * 1024 * 1024 //切片大小
+        file.chunkSize = 5 * 1024 * 1024 //切片大小
         const idx = this.file.url.indexOf('?')
         file.obj = qs.parse(this.file.url.slice(idx + 1))
         file.issmallfile = file.sizeLength <= file.chunkSize
@@ -284,6 +283,12 @@ export default {
               this.lastFn(file)
             } else {
               this.continueUpload(file, file.loadSize)
+              // console.log(file.allBufferLists, file.loadSize, 98555555555)
+              // const obj = file.allBufferLists.find((item) => item.loadSize === file.loadSize)
+              // alert(obj.idx + 1)
+              // if (obj) {
+              //   this.continueUpload(file, obj.idx + 1)
+              // }
             }
           } else {
             this.continueUpload(file, 0)
