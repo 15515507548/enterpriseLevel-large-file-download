@@ -28,7 +28,7 @@ export default {
         isinterfaceFailedfor: false,
         isShow: false, //是否显示进度条
         iconClass: 'el-icon-video-pause', //暂停或上传图标
-        cancel: [], //需要取消的接口请求
+        controllers: [], //需要取消的接口请求
         terminateRequest: false, //当前的状态是否是暂停
         allBufferLists: [], //切片下载成功的结果
         interfaceFailedLists: [] //切片下载接口失败的索引i
@@ -36,27 +36,37 @@ export default {
     }
   },
   async created() {
-    const successObj = localStorage.getItem('downSuccess')
-      ? JSON.parse(localStorage.getItem('downSuccess'))
-      : null
-    const isinterfaceFailedfor = localStorage.getItem('isinterfaceFailedfor') === 'true'
-    this.file.loadSize = successObj ? +successObj.loadSize : 0
-    this.file.percentage = successObj ? +successObj.percentage : 0
-    this.file.isinterfaceFailedfor = isinterfaceFailedfor
+    this.file.interfaceFailedLists = localStorage.getItem('interfaceFailedLists')
+      ? JSON.parse(localStorage.getItem('interfaceFailedLists'))
+      : []
+    this.file.isinterfaceFailedfor = localStorage.getItem('isinterfaceFailedfor') === 'true'
 
     const allBufferLists = await localforage.getItem('allBufferLists')
-    const interfaceFailedLists = await localforage.getItem('interfaceFailedLists')
-    this.file.allBufferLists = allBufferLists || []
-    this.file.interfaceFailedLists = interfaceFailedLists || []
+    if (allBufferLists) {
+      allBufferLists && allBufferLists.sort((a, b) => a.idx - b.idx)
+      this.file.allBufferLists = allBufferLists
+      if (allBufferLists.length >= 1) {
+        const lastObj = allBufferLists[allBufferLists.length - 1]
+        this.file.loadSize = lastObj.loadSize
+        this.file.percentage = lastObj.percentage
+      }
+    }
+    console.log(
+      this.file.allBufferLists,
+      this.file.loadSize,
+      this.file.percentage,
+      this.file.interfaceFailedLists,
+      'created'
+    )
   },
   methods: {
     async handlePausePlay(file) {
       if (file.iconClass == 'el-icon-video-pause') {
         file.iconClass = 'el-icon-video-play'
-        file.cancel.forEach((source) => {
-          // source && source.abort()
-          source && source()
+        file.controllers.forEach((controller) => {
+          controller.abort()
         })
+        file.controllers = []
         file.terminateRequest = true
       } else {
         file.terminateRequest = false
@@ -75,6 +85,9 @@ export default {
       const start = i * file.chunkSize
       const end = i + 1 == file.totalChunks ? file.sizeLength - 1 : (i + 1) * file.chunkSize - 1
       const fn = () => {
+        const controller = new AbortController()
+        let signal = controller.signal
+        file.controllers.push(controller)
         return axios({
           url: file.url,
           method: 'get',
@@ -82,9 +95,7 @@ export default {
             range: `bytes=${start}-${end}`
           },
           responseType: 'arraybuffer',
-          cancelToken: new axios.CancelToken(function (c) {
-            file.cancel.push(c)
-          })
+          signal
         })
       }
 
@@ -102,51 +113,55 @@ export default {
                 file.lists.delete(promise)
                 file.interfaceFailedLists = file.interfaceFailedLists.filter((nub) => nub != i)
                 file.loadSize++
+                file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
                 file.allBufferLists.push({
                   idx: i,
                   buffer: res.data,
-                  loadSize: file.loadSize
+                  loadSize: file.loadSize,
+                  percentage: file.percentage
                 })
-                console.log(i, file.loadSize, '成功')
-                file.percentage = +((file.loadSize / file.totalChunks) * 100).toFixed(0)
                 localStorage.setItem(
-                  'downSuccess',
-                  JSON.stringify({
-                    loadSize: file.loadSize,
-                    percentage: file.percentage
-                  })
+                  'interfaceFailedLists',
+                  JSON.stringify(file.interfaceFailedLists)
                 )
-
                 return
               }
               throw '下载失败，请您稍后再试~~'
             })
             .catch((err) => {
               file.lists.delete(promise)
+              if (!file.interfaceFailedLists.includes(i)) {
+                file.interfaceFailedLists.push(i)
+                localStorage.setItem(
+                  'interfaceFailedLists',
+                  JSON.stringify(file.interfaceFailedLists)
+                )
+              }
               index++
               sgfd(i, fn, index)
             })
         }
       }
-      async function FSG(i) {
+      async function FSG() {
         if (file.lists.size >= 3) {
           // 3代表请求控制最大并发数
           try {
             await Promise.race(file.lists)
-            await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
             await localforage.setItem('allBufferLists', file.allBufferLists)
+            console.log(
+              file.allBufferLists,
+              file.loadSize,
+              file.totalChunks,
+              file.percentage,
+              '成功'
+            )
           } catch (err) {
-            if (!file.interfaceFailedLists.includes(i)) {
-              file.interfaceFailedLists.push(i)
-              await localforage.setItem('interfaceFailedLists', file.interfaceFailedLists)
-            }
-            await FSG(i)
+            await FSG()
           }
         }
       }
-
       sgfd(i, fn)
-      await FSG(i)
+      await FSG()
     },
     async continueUpload(file, startIdx) {
       for (let i = startIdx; i < file.totalChunks; i++) {
@@ -165,7 +180,6 @@ export default {
     //所有请求完成后，失败请求接口重试
     async lastFn(file) {
       if (file.interfaceFailedLists.length) {
-        console.log('失败')
         for (const i of file.interfaceFailedLists) {
           const obj = file.allBufferLists.find((item) => item.idx === i)
           if (obj) {
@@ -183,12 +197,12 @@ export default {
         }
       }
       await Promise.allSettled(file.lists)
+      console.log(file.allBufferLists, file.loadSize, file.totalChunks, file.percentage, '接口完毕')
       // if (file.iconClass == 'el-icon-video-play') return
       if (file.loadSize != file.totalChunks) {
         this.$message.error('下载失败，请您稍后再试~~')
       } else {
         file.allBufferLists.sort((a, b) => a.idx - b.idx)
-        console.log(file.loadSize, file.totalChunks, file.allBufferLists, 4444444)
         const arrBufferList = file.allBufferLists.map((item) => new Uint8Array(item.buffer))
         const allBuffer = this.concatenate(Uint8Array, arrBufferList)
         const blob = new Blob([allBuffer])
@@ -203,17 +217,15 @@ export default {
         window.URL.revokeObjectURL(blobURL)
         document.body.removeChild(elink)
       }
-      console.log(file.loadSize, file.percentage, file.totalChunks, '结束1')
       file.isShow = false
       file.loadSize = 0
       file.percentage = 0
-      file.cancel = []
-      localStorage.removeItem('downSuccess')
+      file.controllers = []
       file.isinterfaceFailedfor = false
       localStorage.removeItem('isinterfaceFailedfor')
-      console.log(file.loadSize, file.percentage, file.totalChunks, '结束2')
       file.allBufferLists = []
       file.interfaceFailedLists = []
+      localStorage.removeItem('interfaceFailedLists')
       await localforage.clear()
     },
     concatenate(resultConstructor, arrays) {
@@ -275,20 +287,23 @@ export default {
           }
         } else {
           file.lists = new Set()
-          file.cancel = []
+          file.controllers = []
           file.totalChunks = Math.ceil(file.sizeLength / file.chunkSize)
-          console.log(file.loadSize, file.percentage, file.totalChunks, '开始')
+
           if (file.percentage) {
             if (file.isinterfaceFailedfor) {
               this.lastFn(file)
             } else {
-              this.continueUpload(file, file.loadSize)
-              // console.log(file.allBufferLists, file.loadSize, 98555555555)
-              // const obj = file.allBufferLists.find((item) => item.loadSize === file.loadSize)
-              // alert(obj.idx + 1)
-              // if (obj) {
-              //   this.continueUpload(file, obj.idx + 1)
-              // }
+              const obj = file.allBufferLists.find((item) => item.loadSize === file.loadSize)
+              console.log(
+                file.allBufferLists,
+                file.loadSize,
+                file.totalChunks,
+                file.percentage,
+                obj,
+                '成功'
+              )
+              this.continueUpload(file, obj.idx + 1)
             }
           } else {
             this.continueUpload(file, 0)
