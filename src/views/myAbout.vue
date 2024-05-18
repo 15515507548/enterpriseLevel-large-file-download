@@ -64,6 +64,7 @@ export default {
       if (file.iconClass == 'el-icon-video-pause') {
         file.iconClass = 'el-icon-video-play'
         file.controllers.forEach((controller) => {
+          //注意：一旦调用了controller.abort()，这个controller实例对象就不能再用于新的请求，需要创建一个新的AbortController实例。
           controller.abort()
         })
         file.controllers = []
