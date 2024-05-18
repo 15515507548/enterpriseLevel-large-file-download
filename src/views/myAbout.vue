@@ -87,7 +87,7 @@ export default {
       const end = i + 1 == file.totalChunks ? file.sizeLength - 1 : (i + 1) * file.chunkSize - 1
       const fn = () => {
         const controller = new AbortController()
-        let signal = controller.signal
+        const signal = controller.signal
         file.controllers.push(controller)
         return axios({
           url: file.url,
