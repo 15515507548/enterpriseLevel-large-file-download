@@ -36,16 +36,17 @@ export default {
     }
   },
   async created() {
+    //断点续载(类似断点续传)通过localStorage和localforage拿到页面刷新之前保存的最新数据
     this.file.interfaceFailedLists = localStorage.getItem('interfaceFailedLists')
       ? JSON.parse(localStorage.getItem('interfaceFailedLists'))
       : []
     this.file.isinterfaceFailedfor = localStorage.getItem('isinterfaceFailedfor') === 'true'
-
     const allBufferLists = await localforage.getItem('allBufferLists')
     if (allBufferLists) {
-      allBufferLists && allBufferLists.sort((a, b) => a.idx - b.idx)
+      allBufferLists.sort((a, b) => a.idx - b.idx)
       this.file.allBufferLists = allBufferLists
       if (allBufferLists.length >= 1) {
+        //通过allBufferLists从小到大排序后获取最后一条数据拿到当前开始下载的loadSize和percentage
         const lastObj = allBufferLists[allBufferLists.length - 1]
         this.file.loadSize = lastObj.loadSize
         this.file.percentage = lastObj.percentage
