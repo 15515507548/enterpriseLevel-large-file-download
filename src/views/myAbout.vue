@@ -305,7 +305,9 @@ export default {
                 obj,
                 '成功'
               )
-              this.continueUpload(file, obj.idx + 1)
+              if (obj) {
+                this.continueUpload(file, obj.idx + 1)
+              }
             }
           } else {
             this.continueUpload(file, 0)
