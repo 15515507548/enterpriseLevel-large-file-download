@@ -61,12 +61,12 @@ export default {
   methods: {
     pauseAndContinueDownload(file) {
       if (file.isinterfaceFailedfor) {
-        this.lastFn(file)
+        //所有请求完成后，失败请求接口重试
+        this.failedInterfaceRetry(file)
       } else {
-        const obj = file.allBufferLists.find((item) => item.loadSize === file.loadSize)
-        if (obj) {
-          this.continueUpload(file, obj.idx + 1)
-        }
+        const idxs = file.allBufferLists.map((item) => item.idx)
+        const idx = Math.max(...idxs)
+        this.continueUpload(file, idx + 1)
       }
     },
     async handlePausePlay(file) {
@@ -158,19 +158,20 @@ export default {
     },
     async continueUpload(file, startIdx) {
       for (let i = startIdx; i < file.totalChunks; i++) {
-        const obj = file.allBufferLists.find((item) => item.idx === i)
-        if (obj) {
-          continue
-        }
         if (file.terminateRequest) {
           return
         }
         await this.forFn(i, file)
       }
       await Promise.allSettled(file.lists)
-      await this.lastFn(file)
+      if (file.allBufferLists.length == file.totalChunks) {
+        this.bufferMerge(file)
+      } else {
+        //所有请求完成后，失败请求接口重试
+        this.failedInterfaceRetry(file)
+      }
     },
-    bufferMerge(file) {
+    async bufferMerge(file) {
       file.allBufferLists.sort((a, b) => a.idx - b.idx)
       const arrBufferList = file.allBufferLists.map((item) => new Uint8Array(item.buffer))
       const allBuffer = this.concatenate(Uint8Array, arrBufferList)
@@ -185,35 +186,6 @@ export default {
       elink.click()
       window.URL.revokeObjectURL(blobURL)
       document.body.removeChild(elink)
-    },
-    //所有请求完成后，失败请求接口重试
-    async lastFn(file) {
-      if (file.allBufferLists.length == file.totalChunks) {
-        this.bufferMerge(file)
-      } else {
-        console.log(456321)
-        for (let i = 0; i < file.totalChunks; i++) {
-          const obj = file.allBufferLists.find((item) => item.idx === i)
-          if (obj) {
-            continue
-          }
-          if (!file.isinterfaceFailedfor) {
-            //所有请求完成后，失败接口重试时点击暂停按钮或页面刷新时的操作
-            file.isinterfaceFailedfor = true
-            localStorage.setItem('isinterfaceFailedfor', true)
-          }
-          if (file.terminateRequest) {
-            return
-          }
-          await this.forFn(i, file)
-        }
-        await Promise.allSettled(file.lists)
-        if (file.allBufferLists.length !== file.totalChunks) {
-          this.$message.error('下载失败，请您稍后再试~~')
-        } else {
-          this.bufferMerge(file)
-        }
-      }
       console.log(file.allBufferLists, file.loadSize, file.totalChunks, file.percentage, '接口完毕')
       file.isShow = false
       file.loadSize = 0
@@ -225,6 +197,40 @@ export default {
       localStorage.removeItem('totalChunks')
       file.allBufferLists = []
       await localforage.clear()
+    },
+    //所有请求完成后，失败请求接口重试
+    async failedInterfaceRetry(file) {
+      console.log(
+        file.allBufferLists,
+        'idx:',
+        file.allBufferLists.map((item) => item.idx),
+        'loadSize:',
+        file.allBufferLists.map((item) => item.loadSize),
+        'percentage:',
+        file.allBufferLists.map((item) => item.percentage),
+        '失败请求接口重试'
+      )
+      for (let i = 0; i < file.totalChunks; i++) {
+        const obj = file.allBufferLists.find((item) => item.idx === i)
+        if (obj) {
+          continue
+        }
+        if (!file.isinterfaceFailedfor) {
+          //所有请求完成后，失败接口重试时点击暂停按钮或页面刷新时的操作
+          file.isinterfaceFailedfor = true
+          localStorage.setItem('isinterfaceFailedfor', true)
+        }
+        if (file.terminateRequest) {
+          return
+        }
+        await this.forFn(i, file)
+      }
+      await Promise.allSettled(file.lists)
+      if (file.allBufferLists.length !== file.totalChunks) {
+        this.$message.error('下载失败，请您稍后再试~~')
+      } else {
+        this.bufferMerge(file)
+      }
     },
     concatenate(resultConstructor, arrays) {
       let totalLength = 0
@@ -249,7 +255,7 @@ export default {
         console.time('并发下载')
         file.sizeLength = Number(res.headers['content-length'])
         file.isShow = true
-        file.chunkSize = 5 * 1024 * 1024 //切片大小
+        file.chunkSize = 10 * 1024 * 1024 //切片大小
         const idx = this.file.url.indexOf('?')
         file.obj = qs.parse(this.file.url.slice(idx + 1))
         file.issmallfile = file.sizeLength <= file.chunkSize
