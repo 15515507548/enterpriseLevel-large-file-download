@@ -192,24 +192,13 @@ export default {
       file.percentage = 0
       file.controllers = []
       file.isinterfaceFailedfor = false
-      localStorage.removeItem('isinterfaceFailedfor')
       file.totalChunks = 0
-      localStorage.removeItem('totalChunks')
       file.allBufferLists = []
+      localStorage.clear()
       await localforage.clear()
     },
     //所有请求完成后，失败请求接口重试
     async failedInterfaceRetry(file) {
-      console.log(
-        file.allBufferLists,
-        'idx:',
-        file.allBufferLists.map((item) => item.idx),
-        'loadSize:',
-        file.allBufferLists.map((item) => item.loadSize),
-        'percentage:',
-        file.allBufferLists.map((item) => item.percentage),
-        '失败请求接口重试'
-      )
       for (let i = 0; i < file.totalChunks; i++) {
         const obj = file.allBufferLists.find((item) => item.idx === i)
         if (obj) {
@@ -252,7 +241,6 @@ export default {
       })
       if (res.status == 200) {
         // 获取长度来进行分割块
-        console.time('并发下载')
         file.sizeLength = Number(res.headers['content-length'])
         file.isShow = true
         file.chunkSize = 10 * 1024 * 1024 //切片大小
