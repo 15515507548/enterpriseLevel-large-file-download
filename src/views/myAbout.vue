@@ -111,7 +111,7 @@ export default {
           const promise = fn()
           file.lists.add(promise)
           promise
-            .then((res) => {
+            .then(async (res) => {
               if (+res.status === 206) {
                 file.lists.delete(promise)
                 file.loadSize++
@@ -122,7 +122,9 @@ export default {
                   loadSize: file.loadSize,
                   percentage: file.percentage
                 })
-                console.log('then')
+                console.log('then1', file.loadSize, file.allBufferLists)
+                await localforage.setItem('allBufferLists', file.allBufferLists)
+                console.log('then2', file.loadSize, file.allBufferLists)
                 return
               }
               throw '下载失败，请您稍后再试~~'
@@ -186,7 +188,7 @@ export default {
       elink.click()
       window.URL.revokeObjectURL(blobURL)
       document.body.removeChild(elink)
-      console.log(file.allBufferLists, file.loadSize, file.totalChunks, file.percentage, '接口完毕')
+
       file.isShow = false
       file.loadSize = 0
       file.percentage = 0
@@ -195,6 +197,7 @@ export default {
       file.totalChunks = 0
       file.allBufferLists = []
       localStorage.clear()
+      console.log(file.allBufferLists, file.loadSize, file.totalChunks, file.percentage, '接口完毕')
       await localforage.clear()
     },
     //所有请求完成后，失败请求接口重试
